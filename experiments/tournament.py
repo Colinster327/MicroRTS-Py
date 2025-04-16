@@ -15,6 +15,19 @@ from stable_baselines3.common.vec_env import VecMonitor, VecVideoRecorder
 from experiments.classes.TrainableDT import TrainableDT
 from gym_microrts import microrts_ai  # noqa
 
+import importlib
+
+import sys
+import os
+pwd = os.path.dirname(__file__)
+
+packages_path = os.path.join(pwd, 'packages')
+models_path = os.path.join(pwd, 'models')
+
+packages = [f.name for f in os.scandir(packages_path) if f.is_dir()]
+for package in packages:
+    package_path = os.path.join(packages_path, package)
+    sys.path.append(package_path)
 
 def parse_args():
     # fmt: off
@@ -24,7 +37,7 @@ def parse_args():
         help='if toggled, `torch.backends.cudnn.deterministic=False`')
     parser.add_argument('--cuda', type=lambda x: bool(strtobool(x)), default=True, nargs='?', const=True,
         help='if toggled, cuda will not be enabled by default')
-    parser.add_argument('--capture-video', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=True,
+    parser.add_argument('--capture-video', type=lambda x: bool(strtobool(x)), default=False, nargs='?', const=False,
         help='whether to capture videos of the agent performances (check out `videos` folder)')
     parser.add_argument('--dt-dataset', type=str, default="episode_data/cm-mcrp-dataset-v2/save_0",
         help='the path to the decision transformer dataset')
@@ -38,7 +51,7 @@ def parse_args():
     )
     parser.add_argument(
         "--agents",
-        nargs='+',
+        type=str,
         help="the path to the agent models to be ran in the tournament"
     )
     parser.add_argument(
@@ -64,26 +77,23 @@ def parse_args():
     return args
 
 
-def get_bot_name(bot, bot_type):
-    if bot_type == "agent":
-        delimiter = "/" if "/" in bot["path"] else "\\"
-        return bot["path"].split(delimiter)[-1].split(".")[0]
-    elif bot_type == "dt":
+def get_bot_name(bot):
+    if bot["type"] == "agent" or bot["type"] == "ai":
+        return bot["path"]
+    elif bot["type"] == "dt":
         delimiter = "/" if "/" in bot["path"] else "\\"
         split_path = bot["path"].split(delimiter)
         if split_path[-1] == "":
             return split_path[-2]
         else:
             return split_path[-1]
-    elif bot_type == "ai":
-        return bot["classname"]
     else:
         raise ValueError(f"Unknown bot type: {bot_type}")
 
 
 def print_final_results(bots_wins, all_bots):
     print("\nFinal Results:")
-    bot_names = [get_bot_name(bot, bot["type"]) for bot in all_bots]
+    bot_names = [get_bot_name(bot) for bot in all_bots]
     header = " " * 15 + " | " + " | ".join(f"{name:>15}" for name in bot_names) + " | Total Wins"
     print(header)
     print("-" * len(header))
@@ -96,11 +106,13 @@ def print_final_results(bots_wins, all_bots):
 if __name__ == "__main__":
     args = parse_args()
 
-    from ppo_gridnet import Agent, MicroRTSStatsRecorder
+    from ppo_gridnet import MicroRTSStatsRecorder
 
     from gym_microrts.envs.vec_env import (MicroRTSBotVecEnv,
                                            MicroRTSGridModeVecEnv)
 
+    agents_file = open(args.agents, 'r')
+    
     # TRY NOT TO MODIFY: seeding
     device = torch.device(
         "cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -114,17 +126,22 @@ if __name__ == "__main__":
 
     # variables for decision transformer
     TARGET_RETURN = 10
-    dataset = DatasetDict.load_from_disk(args.dt_dataset)
-    collector = DecisionTransformerGymDataCollator(dataset["train"])
+    if args.dts:
+        dataset = DatasetDict.load_from_disk(args.dt_dataset)
+        collector = DecisionTransformerGymDataCollator(dataset["train"])
 
     all_bots = []
     if args.agents:
-        all_bots.extend(
-            [{"type": "agent", "path": agent} for agent in args.agents]
-        )
+        for line in agents_file:
+            if line.strip()[0] == '#':
+                continue
+            split = line.split()
+            all_bots.append(
+                    {"type": "agent", "path": split[0], "module_name": split[1], "class_name": split[2]}
+            )
     if args.ais:
         all_bots.extend(
-            [{"type": "ai", "classname": ai} for ai in args.ais]
+            [{"type": "ai", "class_name": ai} for ai in args.ais]
         )
     if args.dts:
         all_bots.extend(
@@ -136,94 +153,23 @@ if __name__ == "__main__":
 
     for i in range(len(all_bots)):
         for j in range(i + 1, len(all_bots)):
-            player1_type = all_bots[i]["type"]
-            player2_type = all_bots[j]["type"]
-            ai1s = None
-            ai2s = None
+            player1 = all_bots[i]
+            player2 = all_bots[j]
+            player1_type = player1["type"]
+            player2_type = player2["type"]
+            ai1s = []
+            ai2s = []
 
-            p1_name = get_bot_name(all_bots[i], player1_type)
-            p2_name = get_bot_name(all_bots[j], player2_type)
+            player1_name = get_bot_name(player1)
+            player2_name = get_bot_name(player2)
 
-            if player1_type == "agent" and player2_type == "agent":
-                bot_envs, selfplay_envs = 0, 2 
-                mode = 0
-
-            elif player1_type == "agent" and player2_type == "ai" or \
-                player1_type == "ai" and player2_type == "agent":
+            if player1_type == "ai" and player2_type == "ai":
                 bot_envs, selfplay_envs = 1, 0
-                mode = 1
-
-                if player1_type == "ai":
-                    ai2s = [eval(f"microrts_ai.{all_bots[i]['classname']}")]
-                else:
-                    ai2s = [eval(f"microrts_ai.{all_bots[j]['classname']}")]
-
-            elif player1_type == "ai" and player2_type == "ai":
-                bot_envs, selfplay_envs = 1, 0
-                mode = 2
-
-                ai1s = [eval(f"microrts_ai.{all_bots[i]['classname']}")]
-                ai2s = [eval(f"microrts_ai.{all_bots[j]['classname']}")]
-
-            elif player1_type == "dt" and player2_type == "agent" or \
-                player1_type == "agent" and player2_type == "dt":
-                bot_envs, selfplay_envs = 0, 2
-                mode = 3
-
-            elif player1_type == "dt" and player2_type == "ai" or \
-                player1_type == "ai" and player2_type == "dt":
-                bot_envs, selfplay_envs = 1, 0
-                mode = 4
-
-                if player1_type == "ai":
-                    ai2s = [eval(f"microrts_ai.{all_bots[i]['classname']}")]
-                else:
-                    ai2s = [eval(f"microrts_ai.{all_bots[j]['classname']}")]
-
-            else:
-                raise ValueError("DT vs. DT is not currently supported")
-
-            num_envs = bot_envs + selfplay_envs
-
-            if mode == 0:
-                envs = MicroRTSGridModeVecEnv(
-                    num_bot_envs=bot_envs,
-                    num_selfplay_envs=selfplay_envs,
-                    partial_obs=False,
-                    max_steps=max_ep_length,
-                    render_theme=2,
-                    map_paths=[args.eval_map],
-                    reward_weight=np.array([10.0, 1.0, 1.0, 0.2, 1.0, 4.0]),
-                    autobuild=False
-                )
-
-            elif mode == 1:
-                envs = MicroRTSGridModeVecEnv(
-                    num_bot_envs=bot_envs,
-                    num_selfplay_envs=selfplay_envs,
-                    ai2s=ai2s,
-                    partial_obs=False,
-                    max_steps=max_ep_length,
-                    render_theme=2,
-                    map_paths=[args.eval_map],
-                    reward_weight=np.array([10.0, 1.0, 1.0, 0.2, 1.0, 4.0]),
-                    autobuild=False
-                )
-
-            elif mode == 2:
+                ai1s = [eval(f"microrts_ai.{player1_name}")]
+                ai2s = [eval(f"microrts_ai.{player2_name}")]
                 envs = MicroRTSBotVecEnv(
                     ai1s=ai1s,
                     ai2s=ai2s,
-                    max_steps=max_ep_length,
-                    render_theme=2,
-                    map_paths=[args.eval_map],
-                    reward_weight=np.array([10.0, 1.0, 1.0, 0.2, 1.0, 4.0]),
-                    autobuild=False
-                )
-            elif mode == 3:
-                envs = MicroRTSGridModeVecEnv(
-                    num_bot_envs=bot_envs,
-                    num_selfplay_envs=selfplay_envs,
                     partial_obs=False,
                     max_steps=max_ep_length,
                     render_theme=2,
@@ -231,7 +177,16 @@ if __name__ == "__main__":
                     reward_weight=np.array([10.0, 1.0, 1.0, 0.2, 1.0, 4.0]),
                     autobuild=False
                 )
-            elif mode == 4:
+            else:
+                if player1_type == "ai":
+                    bot_envs, selfplay_envs = 1, 0
+                    ai2s = [eval(f"microrts_ai.{player1_name}")]
+                elif player2_type == "ai":
+                    bot_envs, selfplay_envs = 1, 0
+                    ai2s = [eval(f"microrts_ai.{player2_name}")]
+                else:
+                    bot_envs, selfplay_envs = 0, 2 
+
                 envs = MicroRTSGridModeVecEnv(
                     num_bot_envs=bot_envs,
                     num_selfplay_envs=selfplay_envs,
@@ -243,71 +198,49 @@ if __name__ == "__main__":
                     reward_weight=np.array([10.0, 1.0, 1.0, 0.2, 1.0, 4.0]),
                     autobuild=False
                 )
-
+    
             envs = MicroRTSStatsRecorder(envs)
             envs = VecMonitor(envs)
+            next_obs = torch.Tensor(envs.reset()).to(device)
 
             if args.capture_video:
                 envs = VecVideoRecorder(
                     envs, 
-                    f"videos/{exp_name}/{p1_name}-{p2_name}",
+                    f"videos/{exp_name}/{player1_name}-{player2_name}",
                     record_video_trigger=lambda x: x == 0,
                     video_length=max_ep_length,
                 )
 
-            if mode == 0:
-                agent1 = Agent(envs).to(device)
-                agent2 = Agent(envs).to(device)
-
-                agent1.load_state_dict(torch.load(all_bots[i]["path"], map_location=device), strict=False)
+            agent1 = None
+            agent2 = None
+            if player1_type == "agent":
+                agent1_module = importlib.import_module(player1["module_name"])
+                agent1_class = getattr(agent1_module, player1["class_name"])
+                agent1 = agent1_class(envs).to(device)
+                agent1.load_state_dict(torch.load(os.path.join(models_path, player1["path"]), map_location=device, weights_only=True), strict=False)
                 agent1.eval()
-                agent2.load_state_dict(torch.load(all_bots[j]["path"], map_location=device), strict=False)
+
+            if player2_type == "agent":
+                agent2_module = importlib.import_module(player2["module_name"])
+                agent2_class = getattr(agent2_module, player2["class_name"])
+                agent2 = agent2_class(envs).to(device)
+                agent2.load_state_dict(torch.load(os.path.join(models_path, player2["path"]), map_location=device, weights_only=True), strict=False)
                 agent2.eval()
-
-                next_obs = torch.Tensor(envs.reset()).to(device)
-
-            elif mode == 1:
-                agent1 = Agent(envs).to(device)
-
-                if player1_type == "agent":
-                    agent1.load_state_dict(torch.load(all_bots[i]["path"], map_location=device), strict=False)
-                else:
-                    agent1.load_state_dict(torch.load(all_bots[j]["path"], map_location=device), strict=False)
+            
+            if player1_type == "dt":
+                agent1 = TrainableDT.from_pretrained(player1["path"]).to(device)
                 agent1.eval()
-
-                next_obs = torch.Tensor(envs.reset()).to(device)
-
-            elif mode == 2:
-                next_obs = envs.reset()
-
-            elif mode == 3:
-                agent1 = TrainableDT.from_pretrained(all_bots[i]["path"] if player1_type == "dt" else all_bots[j]["path"]).to(device)
-                agent1.eval()
-
-                agent2 = Agent(envs).to(device)
-                agent2.load_state_dict(
-                    torch.load(
-                        all_bots[i]["path"] if player1_type == "agent" else all_bots[j]["path"],
-                        map_location=device
-                    ),
-                    strict=False
-                )
+            
+            if player2_type == "dt":
+                agent2 = TrainableDT.from_pretrained(player2["path"]).to(device)
                 agent2.eval()
-
-                next_obs = torch.Tensor(envs.reset()).to(device)
-            elif mode == 4:
-                agent1 = TrainableDT.from_pretrained(all_bots[i]["path"] if player1_type == "dt" else all_bots[j]["path"]).to(device)
-                agent1.eval()
-
-                next_obs = torch.Tensor(envs.reset()).to(device)
-
 
             print("\n\n====== Next Match ======")
-            print(f"{p1_name} vs. {p2_name}")
+            print(f"{player1_name} vs. {player2_name}")
 
             for game in range(args.games_per_match):
                 # reset the DT trajectory
-                if mode == 3 or mode == 4:
+                if player1_type == "dt" or player2_type == "dt":
                     states = decode_obs(next_obs[0].view(mapsize, -1)).reshape(
                         1, collector.state_dim).to(device=device, dtype=torch.float32)
                     target_return = torch.tensor(
@@ -319,236 +252,113 @@ if __name__ == "__main__":
                         0, device=device, dtype=torch.long).reshape(1, 1)
 
                 for update in range(max_ep_length):
-                    envs.render(mode="rgb_array")
-                    if mode == 0:
-                        with torch.no_grad():
-                            invalid_action_masks = torch.tensor(
-                                np.array(envs.get_action_mask())).to(device)
+                    envs.render(mode="human")
+                    with torch.no_grad():
+                        p1_action = None
+                        p2_action = None
+                        invalid_action_masks = torch.tensor(np.array(envs.get_action_mask())).to(device)
 
+                        if player1_type == "agent":
                             p1_obs = next_obs[::2]
+                            p1_action = agent1.get_action(p1_obs, invalid_action_masks[::2])
+                        if player2_type == "agent":
                             p2_obs = next_obs[1::2]
-                            p1_mask = invalid_action_masks[::2]
-                            p2_mask = invalid_action_masks[1::2]
+                            p2_action = agent2.get_action(p2_obs, invalid_action_masks[1::2])
+                        if player1_type == "dt":
+                            invalid_action_masks = torch.tensor(
+                                np.array(envs.get_action_mask())).to(device)
 
-                            p1_action, _, _, _, _ = agent1.get_action_and_value(
-                                p1_obs, envs=envs, invalid_action_masks=p1_mask, device=device
+                            actions = torch.cat([actions, torch.zeros(
+                                (1, collector.act_dim), device=device)], dim=0)
+                            rewards = torch.cat(
+                                [rewards, torch.zeros(1, device=device)])
+
+                            p1_action = get_action(
+                                agent1,
+                                (states - collector.state_mean) / collector.state_std,
+                                actions,
+                                target_return,
+                                timesteps,
+                                invalid_action_masks[0]
                             )
-                            p2_action, _, _, _, _ = agent2.get_action_and_value(
-                                p2_obs, envs=envs, invalid_action_masks=p2_mask, device=device
+
+                            action[::2] = decode_action(
+                                p1_action.view(mapsize, -1)).view(1, mapsize, -1)
+
+                            next_state = torch.Tensor(
+                                decode_obs(next_obs[0].view(mapsize, -1))
+                            ).to(device).reshape(1, collector.state_dim)
+
+                            states = torch.cat([states, next_state], dim=0)
+                            rewards[-1] = rs[0]
+
+                            pred_return = target_return[0, -1] - rs[0]
+                            target_return = torch.cat(
+                                [target_return, pred_return.reshape(1, 1)], dim=1)
+                            timesteps = torch.cat([timesteps, torch.ones(
+                                (1, 1), device=device, dtype=torch.long) * (update + 1)], dim=1)
+                        if player2_type == "dt":
+                            invalid_action_masks = torch.tensor(
+                                np.array(envs.get_action_mask())).to(device)
+
+                            actions = torch.cat([actions, torch.zeros(
+                                (1, collector.act_dim), device=device)], dim=0)
+                            rewards = torch.cat(
+                                [rewards, torch.zeros(1, device=device)])
+
+                            p2_action = get_action(
+                                agent2,
+                                (states - collector.state_mean) / collector.state_std,
+                                actions,
+                                target_return,
+                                timesteps,
+                                invalid_action_masks[0]
                             )
-                            action = torch.zeros(
-                                (bot_envs + selfplay_envs, p2_action.shape[1], p2_action.shape[2]))
+
+                            p2_action = decode_action(
+                                p2_action.view(mapsize, -1)).view(1, mapsize, -1)
+
+                            next_state = torch.Tensor(
+                                decode_obs(next_obs[1].view(mapsize, -1))
+                            ).to(device).reshape(1, collector.state_dim)
+
+                            states = torch.cat([states, next_state], dim=0)
+                            rewards[-1] = rs[1]
+
+                            pred_return = target_return[0, -1] - rs[1]
+                            target_return = torch.cat(
+                                [target_return, pred_return.reshape(1, 1)], dim=1)
+                            timesteps = torch.cat([timesteps, torch.ones(
+                                (1, 1), device=device, dtype=torch.long) * (update + 1)], dim=1)
+
+                        action = torch.zeros(
+                            (envs.num_envs, mapsize, 7)) # 7 action planes
+
+                        if p1_action is not None:
                             action[::2] = p1_action
+                        if p2_action is not None:
                             action[1::2] = p2_action
 
-                            try:
-                                next_obs, _, ds, infos = envs.step(
-                                    action.cpu().numpy().reshape(envs.num_envs, -1))
-                                next_obs = torch.Tensor(next_obs).to(device)
-                            except Exception as e:
-                                e.printStackTrace()
-                                raise
+                        try:
+                            next_obs, _, ds, infos = envs.step(
+                                action.cpu().numpy().reshape(envs.num_envs, -1))
+                            next_obs = torch.Tensor(next_obs).to(device)
+                        except Exception as e:
+                            e.printStackTrace()
+                            raise
 
-                    elif mode == 1:
-                        with torch.no_grad():
-                            invalid_action_masks = torch.tensor(
-                                np.array(envs.get_action_mask())).to(device)
-
-                            action, _, _, _, _ = agent1.get_action_and_value(
-                                next_obs, envs=envs, invalid_action_masks=invalid_action_masks, device=device
-                            )
-
-                            try:
-                                next_obs, _, ds, infos = envs.step(
-                                    action.cpu().numpy().reshape(envs.num_envs, -1))
-                                next_obs = torch.Tensor(next_obs).to(device)
-                            except Exception as e:
-                                e.printStackTrace()
-                                raise
-
-                    elif mode == 2:
-                        # dummy action
-                        next_obs, _, ds, infos = envs.step(
-                            [
-                                [
-                                    [0, 0, 0, 0, 0, 0, 0, 0],
-                                    [0, 0, 0, 0, 0, 0, 0, 0],
-                                ]
-                            ]
-                        )
-
-                    elif mode == 3:
-                        with torch.no_grad():
-                            invalid_action_masks = torch.tensor(
-                                np.array(envs.get_action_mask())).to(device)
-
-                            actions = torch.cat([actions, torch.zeros(
-                                (1, collector.act_dim), device=device)], dim=0)
-                            rewards = torch.cat(
-                                [rewards, torch.zeros(1, device=device)])
-
-                            p1_action = get_action(
-                                agent1,
-                                (states - collector.state_mean) / collector.state_std,
-                                actions,
-                                target_return,
-                                timesteps,
-                                invalid_action_masks[0]
-                            )
-                            actions[-1] = p1_action
-
-                            action = torch.zeros(
-                                (num_envs, mapsize, 7), device=device)
-
-                            action[::2] = decode_action(
-                                p1_action.view(mapsize, -1)).view(1, mapsize, -1)
-
-                            p2_obs = next_obs[1::2]
-                            p2_mask = invalid_action_masks[1::2]
-
-                            p2_action, _, _, _, _ = agent2.get_action_and_value(
-                                p2_obs, envs=envs, invalid_action_masks=p2_mask, device=device
-                            )
-                            action[1::2] = p2_action
-
-                            action = action.detach().cpu().numpy()
-
-                            try:
-                                next_obs, rs, ds, infos = envs.step(
-                                    action.reshape(envs.num_envs, -1))
-                                next_obs = torch.Tensor(next_obs).to(device)
-                            except Exception as e:
-                                e.printStackTrace()
-                                raise
-
-                            next_state = torch.Tensor(
-                                decode_obs(next_obs[0].view(mapsize, -1))
-                            ).to(device).reshape(1, collector.state_dim)
-
-                            states = torch.cat([states, next_state], dim=0)
-                            rewards[-1] = rs[0]
-
-                            pred_return = target_return[0, -1] - rs[0]
-                            target_return = torch.cat(
-                                [target_return, pred_return.reshape(1, 1)], dim=1)
-                            timesteps = torch.cat([timesteps, torch.ones(
-                                (1, 1), device=device, dtype=torch.long) * (update + 1)], dim=1)
-
-                    elif mode == 4:
-                        with torch.no_grad():
-                            invalid_action_masks = torch.tensor(
-                                np.array(envs.get_action_mask())).to(device)
-
-                            actions = torch.cat([actions, torch.zeros(
-                                (1, collector.act_dim), device=device)], dim=0)
-                            rewards = torch.cat(
-                                [rewards, torch.zeros(1, device=device)])
-
-                            p1_action = get_action(
-                                agent1,
-                                (states - collector.state_mean) / collector.state_std,
-                                actions,
-                                target_return,
-                                timesteps,
-                                invalid_action_masks[0]
-                            )
-                            actions[-1] = p1_action
-
-                            action = torch.zeros(
-                                (num_envs, mapsize, 7), device=device)
-
-                            action[::2] = decode_action(
-                                p1_action.view(mapsize, -1)).view(1, mapsize, -1)
-
-                            action = action.detach().cpu().numpy()
-
-                            try:
-                                next_obs, rs, ds, infos = envs.step(
-                                    action.reshape(envs.num_envs, -1))
-                                next_obs = torch.Tensor(next_obs).to(device)
-                            except Exception as e:
-                                e.printStackTrace()
-                                raise
-
-                            next_state = torch.Tensor(
-                                decode_obs(next_obs[0].view(mapsize, -1))
-                            ).to(device).reshape(1, collector.state_dim)
-
-                            states = torch.cat([states, next_state], dim=0)
-                            rewards[-1] = rs[0]
-
-                            pred_return = target_return[0, -1] - rs[0]
-                            target_return = torch.cat(
-                                [target_return, pred_return.reshape(1, 1)], dim=1)
-                            timesteps = torch.cat([timesteps, torch.ones(
-                                (1, 1), device=device, dtype=torch.long) * (update + 1)], dim=1)
-
-                    for idx, info in enumerate(infos):
-                        if "episode" in info.keys():
-                            score = int(info["microrts_stats"]["WinLossRewardFunction"])
-
-                            if mode == 0:
-                                if idx % 2 == 0:
-                                    if score > 0:
-                                        bots_wins[i][j] += 1
-                                        print(f"Game {game + 1}: {p1_name} wins!")
-                                    elif score == 0:
-                                        print(f"Game {game + 1}: it's a draw!")
-                                elif score > 0:
-                                    bots_wins[j][i] += 1
-                                    print(f"Game {game + 1}: {p2_name} wins!")
-
-                            elif mode in {1, 4}:
-                                if (player1_type == "agent" and mode == 1) or (player1_type == "dt" and mode == 4):
-                                    if score > 0:
-                                        bots_wins[i][j] += 1
-                                        print(f"Game {game + 1}: {p1_name} wins!")
-                                    elif score < 0:
-                                        bots_wins[j][i] += 1
-                                        print(f"Game {game + 1}: {p2_name} wins!")
-                                    else:
-                                        print(f"Game {game + 1}: it's a draw!")
-                                else:
-                                    if score > 0:
-                                        bots_wins[j][i] += 1
-                                        print(f"Game {game + 1}: {p2_name} wins!")
-                                    elif score < 0:
-                                        bots_wins[i][j] += 1
-                                        print(f"Game {game + 1}: {p1_name} wins!")
-                                    else:
-                                        print(f"Game {game + 1}: it's a draw!")
-
-                            elif mode == 2:
-                                if score > 0:
-                                    bots_wins[i][j] += 1
-                                    print(f"Game {game + 1}: {p1_name} wins!")
-                                elif score < 0:
-                                    bots_wins[j][i] += 1
-                                    print(f"Game {game + 1}: {p2_name} wins!")
-                                else:
-                                    print(f"Game {game + 1}: it's a draw!")
-
-                            elif mode == 3:
-                                if idx % 2 == 0:
-                                    if player1_type == "dt":
-                                        if score > 0:
-                                            bots_wins[i][j] += 1
-                                            print(f"Game {game + 1}: {p1_name} wins!")
-                                        elif score == 0:
-                                            print(f"Game {game + 1}: it's a draw!")
-                                    else:
-                                        if score > 0:
-                                            bots_wins[j][i] += 1
-                                            print(f"Game {game + 1}: {p2_name} wins!")
-                                        elif score == 0:
-                                            print(f"Game {game + 1}: it's a draw!")
-                                elif score > 0:
-                                    if player1_type == "dt":
-                                        bots_wins[j][i] += 1
-                                        print(f"Game {game + 1}: {p2_name} wins!")
-                                    else:
-                                        bots_wins[i][j] += 1
-                                        print(f"Game {game + 1}: {p1_name} wins!")
+                    
+                    if "episode" in infos[0].keys():
+                        # game finished
+                        score = int(infos[0]["microrts_stats"]["WinLossRewardFunction"])
+                        if score > 0: # player1 wins
+                            bots_wins[i][j] += 1
+                            print(f"Game {game + 1}: {player1_name} wins!")
+                        elif score < 0: # player2 wins
+                            bots_wins[j][i] += 1
+                            print(f"Game {game + 1}: {player2_name} wins!")
+                        else: # draw
+                            print(f"Game {game + 1}: it's a draw!")
 
                     # game exit condition
                     if ds[0]:

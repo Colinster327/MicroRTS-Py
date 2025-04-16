@@ -172,6 +172,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 class Agent(nn.Module):
     def __init__(self, envs, mapsize=16 * 16):
         super(Agent, self).__init__()
+        self.envs = envs
         self.mapsize = mapsize
         h, w, c = envs.observation_space.shape
         self.encoder = nn.Sequential(
@@ -197,6 +198,27 @@ class Agent(nn.Module):
             layer_init(nn.Linear(128, 1), std=1),
         )
         self.register_buffer("mask_value", torch.tensor(-1e8))
+
+    def get_action(self, obs):
+        hidden = self.encoder(x)
+        logits = self.actor(hidden)
+        
+        invalid_action_masks = torch.tensor(self.envs.get_action_mask()).to(device)
+
+        invalid_action_masks = invalid_action_masks.view(
+            -1, invalid_action_masks.shape[-1])
+        
+        action = action.view(-1, action.shape[-1]).T
+        
+        split_invalid_action_masks = torch.split(invalid_action_masks, envs.action_plane_space.nvec.tolist(), dim=1)
+        
+        multi_categoricals = [
+            CategoricalMasked(logits=logits, masks=iam, mask_value=self.mask_value)
+            for (logits, iam) in zip(split_logits, split_invalid_action_masks)
+        ]
+
+        num_predicted_parameters = len(envs.action_plane_space.nvec)
+        return action.T.view(-1, self.mapsize, num_predicted_parameters)
 
     def get_action_and_value(self, x, action=None, invalid_action_masks=None, envs=None, device=None):
         hidden = self.encoder(x)
