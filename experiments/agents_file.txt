@@ -1,3 +1,5 @@
 # .pt path, module_name, class_name
-kaedenagent.pt ppo_gridnet Agent
-Ye6m.pt ppo_gridnet Agent
+ai agentP
+agent kaedenagent.pt ppo_gridnet Agent
+agent resnetkaeden.pt resnet_gridnet QuadconeAgent
+agent Ye6m.pt ppo_gridnet Agent

@@ -78,8 +78,10 @@ def parse_args():
 
 
 def get_bot_name(bot):
-    if bot["type"] == "agent" or bot["type"] == "ai":
+    if bot["type"] == "agent":
         return bot["path"]
+    elif bot["type"] == "ai":
+        return bot["class_name"]
     elif bot["type"] == "dt":
         delimiter = "/" if "/" in bot["path"] else "\\"
         split_path = bot["path"].split(delimiter)
@@ -131,22 +133,25 @@ if __name__ == "__main__":
         collector = DecisionTransformerGymDataCollator(dataset["train"])
 
     all_bots = []
-    if args.agents:
-        for line in agents_file:
-            if line.strip()[0] == '#':
-                continue
-            split = line.split()
+    for line in agents_file:
+        if line.strip()[0] == '#':
+            continue
+        split = line.split()
+        if split[0] == 'agent':
             all_bots.append(
-                    {"type": "agent", "path": split[0], "module_name": split[1], "class_name": split[2]}
+                    {"type": "agent", "path": split[1], "module_name": split[2], "class_name": split[3]}
             )
-    if args.ais:
-        all_bots.extend(
-            [{"type": "ai", "class_name": ai} for ai in args.ais]
-        )
-    if args.dts:
-        all_bots.extend(
-            [{"type": "dt", "path": dt} for dt in args.dts]
-        )
+        elif split[0] == 'ai':
+            all_bots.append(
+                    {"type": "ai", "class_name": split[1]}
+            )
+        elif split[0] == 'dt':
+            all_bots.append(
+                    {"type": "dt", "path": split[1]}
+            )
+        else:
+            raise ValueError
+
     assert len(all_bots) > 1, "at least 2 agents/ais are required to play a tournament"
 
     bots_wins = np.zeros((len(all_bots), len(all_bots)), dtype=np.int32)
@@ -282,7 +287,7 @@ if __name__ == "__main__":
                                 invalid_action_masks[0]
                             )
 
-                            action[::2] = decode_action(
+                            p1_action = decode_action(
                                 p1_action.view(mapsize, -1)).view(1, mapsize, -1)
 
                             next_state = torch.Tensor(
@@ -312,7 +317,7 @@ if __name__ == "__main__":
                                 actions,
                                 target_return,
                                 timesteps,
-                                invalid_action_masks[0]
+                                invalid_action_masks[1]
                             )
 
                             p2_action = decode_action(
