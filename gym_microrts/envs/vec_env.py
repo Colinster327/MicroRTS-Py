@@ -132,6 +132,7 @@ class MicroRTSGridModeVecEnv:
                 "extra_bots/MyValor.jar",
                 "extra_bots/lightari.jar",
                 "extra_bots/ZayNMCTS.jar",
+                "extra_bots/TsuneSearch.jar",
             ]
             for jar in extra_jars:
                 jpype.addClassPath(os.path.join(self.microrts_py_path, jar))
@@ -412,6 +413,7 @@ class MicroRTSBotVecEnv(MicroRTSGridModeVecEnv):
                 "extra_bots/MyValor.jar",
                 "extra_bots/lightari.jar",
                 "extra_bots/ZayNMCTS.jar",
+                "extra_bots/TsuneSearch.jar",
             ]
             for jar in extra_jars:
                 jpype.addClassPath(os.path.join(self.microrts_py_path, jar))

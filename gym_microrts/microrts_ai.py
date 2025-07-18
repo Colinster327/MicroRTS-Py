@@ -79,6 +79,12 @@ def agentP(utt):
     return AgentP(utt)
 
 
+def tsuneSearch(utt):
+    from ai.tsunesearch import TsuneSearch
+
+    return TsuneSearch(utt)
+
+
 def coacAI(utt):
     from ai.coac import CoacAI
 
