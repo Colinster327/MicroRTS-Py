@@ -9,6 +9,6 @@ agent shineagent.pt reinforce_gridnet Agent
 ai myValor
 agent Ye_final.pt ppo_gridnet Agent
 ai coacAI
-agent CoolAgent.pt ppo_grident Agent
+agent CoolAgent.pt ppo_gridnet Agent
 ai lightRushAI
 ai mayari
