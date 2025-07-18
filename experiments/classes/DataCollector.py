@@ -10,7 +10,7 @@ class DecisionTransformerGymDataCollator:
     max_len: int = 200  # subsets of the episode we use for training
     state_dim: int = 1536  # size of state space
     act_dim: int = 19968  # size of action space
-    max_ep_len: int = 2000  # max episode length in the dataset
+    max_ep_len: int = 5000  # max episode length in the dataset
     state_mean: np.array = None  # to store state means
     state_std: np.array = None  # to store state stds
     p_sample: np.array = None  # a distribution to take account trajectory lengths

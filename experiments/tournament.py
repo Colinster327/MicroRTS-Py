@@ -120,7 +120,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
-    max_ep_length = 2000
+    max_ep_length = 5000
     exp_name = f"tournament-{time.time()}".replace(".", "")
     mapsize = 16 * 16
 
