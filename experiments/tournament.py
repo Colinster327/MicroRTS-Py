@@ -215,7 +215,7 @@ if __name__ == "__main__":
                 envs = VecVideoRecorder(
                     envs, 
                     f"videos/{exp_name}/{player1_name}-{player2_name}",
-                    record_video_trigger=lambda x: x == 1,
+                    record_video_trigger=lambda x: x == 0,
                     video_length=max_ep_length,
                 )
 
