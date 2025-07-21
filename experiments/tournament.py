@@ -212,10 +212,11 @@ if __name__ == "__main__":
             next_obs = torch.Tensor(envs.reset()).to(device)
 
             if args.capture_video:
+                print("Capturing video of the tournament...")
                 envs = VecVideoRecorder(
                     envs, 
                     f"videos/{exp_name}/{player1_name}-{player2_name}",
-                    record_video_trigger=lambda x: x == 0,
+                    record_video_trigger=lambda x: x == 1,
                     video_length=max_ep_length,
                 )
 
